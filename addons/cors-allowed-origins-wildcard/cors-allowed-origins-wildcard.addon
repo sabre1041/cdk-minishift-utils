@@ -1,0 +1,6 @@
+# Name: cors-allowed-origins-wildcard
+# Description: Configures OpenShift to allow cross-origin requests from any address
+
+docker exec origin sed -i '/corsAllowedOrigins/ a \- .*' /var/lib/origin/openshift.local.config/master/master-config.yaml
+
+docker restart origin
