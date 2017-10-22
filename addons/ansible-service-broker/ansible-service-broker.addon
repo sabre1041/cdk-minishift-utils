@@ -1,0 +1,17 @@
+# Name: ansible-service-broker                                                                          
+# Description: Deploys the Ansible Service Broker   
+# Required-vars: 
+
+# Create ansible-service-broker project
+oc new-project ansible-service-broker
+
+# Add template to Project
+oc create -n ansible-service-broker -f templates/deploy-ansible-service-broker.template.yaml
+
+# Instantiate Template
+## Wrap in Docker Exec
+## First Handle Varaiables and set sensible defaults
+## Instantiate Template
+docker exec origin /bin/bash -c $'[[ "#{DOCKERHUB_USER}" =~ ^#\{.*\}$ ]] && DOCKERHUB_USER=changeme || DOCKERHUB_USER=#{DOCKERHUB_USER}; [[ "#{DOCKERHUB_PASS}" =~ ^#\{.*\}$ ]] && DOCKERHUB_PASS=changeme || DOCKERHUB_PASS=#{DOCKERHUB_PASS}; [[ "#{DOCKERHUB_ORG}" =~ ^#\{.*\}$ ]] && DOCKERHUB_ORG=ansibleplaybookbundle || DOCKERHUB_ORG=#{DOCKERHUB_ORG}; [[ "#{BROKER_KIND}" =~ ^#\{.*\}$ ]] && BROKER_KIND=Broker || BROKER_KIND=#{BROKER_KIND}; [[ "#{SVC_CAT_API_VER}" =~ ^#\{.*\}$ ]] && SVC_CAT_API_VER=servicecatalog.k8s.io/v1alpha1 || SVC_CAT_API_VER=#{SVC_CAT_API_VER}; [[ "#{BROKER_AUTH}" =~ ^#\{.*\}$ ]] && BROKER_AUTH=\'{\"basicAuthSecret\":{\"namespace\":\"ansible-service-broker\",\"name\":\"asb-auth-secret\"}}\' || BROKER_AUTH=#{BROKER_AUTH};  [[ "#{ENABLE_BASIC_AUTH}" =~ ^#\{.*\}$ ]] && ENABLE_BASIC_AUTH=true || ENABLE_BASIC_AUTH=#{ENABLE_BASIC_AUTH}; oc process ansible-service-broker -n ansible-service-broker -p BROKER_KIND=${BROKER_KIND} -p BROKER_AUTH=${BROKER_AUTH} -p SVC_CAT_API_VER=${SVC_CAT_API_VER} -p ROUTING_SUFFIX=#{routing-suffix} -p ENABLE_BASIC_AUTH=${ENABLE_BASIC_AUTH} -p DOCKERHUB_USER=\"${DOCKERHUB_USER}\" -p DOCKERHUB_PASS=\"${DOCKERHUB_PASS}\" -p DOCKERHUB_ORG=\"${DOCKERHUB_ORG}\" -p BROKER_CA_CERT=$(oc get secret -n service-catalog -o go-template=\'{{ range .items }}{{ if eq .type \"kubernetes.io/service-account-token\" }}{{ index .data \"service-ca.crt\" }}{{end}}{{\"\\n\"}}{{end}}\' | tail -n 1) | oc create -n ansible-service-broker -f-'
+
+echo Ansible Service Broker Deployed
