@@ -1,6 +1,6 @@
-# Name: ansible-service-broker                                                                          
-# Description: Deploys the Ansible Service Broker   
-# Required-vars: 
+# Name: ansible-service-broker
+# Description: Deploys the Ansible Service Broker
+# Required-vars:
 
 # Create ansible-service-broker project
 oc new-project ansible-service-broker
@@ -12,6 +12,10 @@ oc create -n ansible-service-broker -f templates/deploy-ansible-service-broker.t
 ## Wrap in Docker Exec
 ## First Handle Varaiables and set sensible defaults
 ## Instantiate Template
-docker exec origin /bin/bash -c $'[[ "#{DOCKERHUB_USER}" =~ ^#\{.*\}$ ]] && DOCKERHUB_USER=changeme || DOCKERHUB_USER=#{DOCKERHUB_USER}; [[ "#{DOCKERHUB_PASS}" =~ ^#\{.*\}$ ]] && DOCKERHUB_PASS=changeme || DOCKERHUB_PASS=#{DOCKERHUB_PASS}; [[ "#{DOCKERHUB_ORG}" =~ ^#\{.*\}$ ]] && DOCKERHUB_ORG=ansibleplaybookbundle || DOCKERHUB_ORG=#{DOCKERHUB_ORG}; [[ "#{BROKER_KIND}" =~ ^#\{.*\}$ ]] && BROKER_KIND=Broker || BROKER_KIND=#{BROKER_KIND}; [[ "#{SVC_CAT_API_VER}" =~ ^#\{.*\}$ ]] && SVC_CAT_API_VER=servicecatalog.k8s.io/v1alpha1 || SVC_CAT_API_VER=#{SVC_CAT_API_VER}; [[ "#{BROKER_AUTH}" =~ ^#\{.*\}$ ]] && BROKER_AUTH=\'{\"basicAuthSecret\":{\"namespace\":\"ansible-service-broker\",\"name\":\"asb-auth-secret\"}}\' || BROKER_AUTH=#{BROKER_AUTH};  [[ "#{ENABLE_BASIC_AUTH}" =~ ^#\{.*\}$ ]] && ENABLE_BASIC_AUTH=true || ENABLE_BASIC_AUTH=#{ENABLE_BASIC_AUTH}; oc process ansible-service-broker -n ansible-service-broker -p BROKER_KIND=${BROKER_KIND} -p BROKER_AUTH=${BROKER_AUTH} -p SVC_CAT_API_VER=${SVC_CAT_API_VER} -p ROUTING_SUFFIX=#{routing-suffix} -p ENABLE_BASIC_AUTH=${ENABLE_BASIC_AUTH} -p DOCKERHUB_USER=\"${DOCKERHUB_USER}\" -p DOCKERHUB_PASS=\"${DOCKERHUB_PASS}\" -p DOCKERHUB_ORG=\"${DOCKERHUB_ORG}\" -p BROKER_CA_CERT=$(oc get secret -n service-catalog -o go-template=\'{{ range .items }}{{ if eq .type \"kubernetes.io/service-account-token\" }}{{ index .data \"service-ca.crt\" }}{{end}}{{\"\\n\"}}{{end}}\' | tail -n 1) | oc create -n ansible-service-broker -f-'
+docker exec origin /bin/bash -c $'yum install -y openssl'
+docker exec origin /bin/bash -c $'mkdir -p /tmp/etcd-cert'
+docker exec origin /bin/bash -c $'openssl req -nodes -x509 -newkey rsa:4096 -keyout /tmp/etcd-cert/key.pem -out /tmp/etcd-cert/cert.pem -days 365 -subj "/CN=asb-etcd.ansible-service-broker.svc"'
+docker exec origin /bin/bash -c $'openssl genrsa -out /tmp/etcd-cert/MyClient1.key 2048 && openssl req -new -key /tmp/etcd-cert/MyClient1.key -out /tmp/etcd-cert/MyClient1.csr -subj "/CN=client" && openssl x509 -req -in /tmp/etcd-cert/MyClient1.csr -CA /tmp/etcd-cert/cert.pem -CAkey /tmp/etcd-cert/key.pem -CAcreateserial -out /tmp/etcd-cert/MyClient1.pem -days 1024'
+docker exec origin /bin/bash -c $'oc process ansible-service-broker -n ansible-service-broker -p ROUTING_SUFFIX=#{routing-suffix} -p ETCD_TRUSTED_CA_FILE=/var/run/etcd-auth-secret/ca.crt -p BROKER_CLIENT_CERT_PATH=/var/run/asb-etcd-auth/client.crt -p BROKER_CLIENT_KEY_PATH=/var/run/asb-etcd-auth/client.key -p ETCD_TRUSTED_CA="$(base64 /tmp/etcd-cert/cert.pem)" -p BROKER_CLIENT_CERT="$(base64 /tmp/etcd-cert/MyClient1.pem)" -p BROKER_CLIENT_KEY="$(base64 /tmp/etcd-cert/MyClient1.key)" -p BROKER_CA_CERT=$(oc get secret -n kube-service-catalog -o go-template=\'{{ range .items }}{{ if eq .type \"kubernetes.io/service-account-token\" }}{{ index .data \"service-ca.crt\" }}{{end}}{{\"\\n\"}}{{end}}\' | tail -n 1) | oc create -n ansible-service-broker -f-'
 
 echo Ansible Service Broker Deployed

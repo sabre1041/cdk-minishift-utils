@@ -23,23 +23,44 @@ objects:
       service: asb
 
 - apiVersion: v1
+  kind: Service
+  metadata:
+    name: asb-etcd
+    labels:
+      app: etcd
+      service: asb-etcd
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: etcd-tls
+  spec:
+    ports:
+      - name: port-2379
+        port: 2379
+        targetPort: 2379
+        protocol: TCP
+    selector:
+      app: etcd
+      service: asb-etcd
+
+- apiVersion: v1
   kind: ServiceAccount
   metadata:
     name: asb
     namespace: ansible-service-broker
 
-- apiVersion: authorization.openshift.io/v1
+- apiVersion: rbac.authorization.k8s.io/v1beta1
   kind: ClusterRoleBinding
   metadata:
     name: asb
   roleRef:
     name: admin
+    kind: ClusterRole
+    apiGroup: rbac.authorization.k8s.io
   subjects:
   - kind: ServiceAccount
     name: asb
     namespace: ansible-service-broker
 
-- apiVersion: authorization.openshift.io/v1
+- apiVersion: rbac.authorization.k8s.io/v1beta1
   kind: ClusterRole
   metadata:
     name: asb-auth
@@ -56,8 +77,12 @@ objects:
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
+  - apiGroups: ["image.openshift.io", ""]
+    attributeRestrictions: null
+    resources: ["images"]
+    verbs: ["get", "list"]
 
-- apiVersion: authorization.openshift.io/v1
+- apiVersion: rbac.authorization.k8s.io/v1beta1
   kind: ClusterRoleBinding
   metadata:
     name: asb-auth-bind
@@ -68,8 +93,9 @@ objects:
   roleRef:
     kind: ClusterRole
     name: asb-auth
+    apiGroup: rbac.authorization.k8s.io
 
-- apiVersion: authorization.openshift.io/v1
+- apiVersion: rbac.authorization.k8s.io/v1beta1
   kind: ClusterRole
   metadata:
     name: access-asb-role
@@ -120,6 +146,8 @@ objects:
               mountPath: /etc/tls/private
             - name: asb-auth-volume
               mountPath: /var/run/asb-auth
+            - name: asb-etcd-auth
+              mountPath: /var/run/asb-etcd-auth
           ports:
             - containerPort: 1338
               protocol: TCP
@@ -142,30 +170,7 @@ objects:
               scheme: HTTPS
             initialDelaySeconds: 15
             timeoutSeconds: 1
-
-        - image: ${ETCD_IMAGE}
-          name: etcd
-          imagePullPolicy: IfNotPresent
-          terminationMessagePath: /tmp/termination-log
-          workingDir: /etcd
-          args:
-            - ${ETCD_PATH}
-            - --data-dir=/data
-            - --listen-client-urls=http://0.0.0.0:2379
-            - --advertise-client-urls=http://0.0.0.0:2379
-          ports:
-          - containerPort: 2379
-            protocol: TCP
-          env:
-          - name: ETCDCTL_API
-            value: "3"
-          volumeMounts:
-            - mountPath: /data
-              name: etcd
         volumes:
-          - name: etcd
-            persistentVolumeClaim:
-              claimName: etcd
           - name: config-volume
             configMap:
               name: broker-config
@@ -178,6 +183,68 @@ objects:
           - name: asb-auth-volume
             secret:
               secretName: asb-auth-secret
+          - name: asb-etcd-auth
+            secret:
+              secretName: broker-etcd-auth-secret
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: asb-etcd
+    labels:
+      app: etcd
+      service: asb-etcd
+  spec:
+    replicas: 1
+    selector:
+      app: etcd
+    strategy:
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          app: etcd
+          service: asb-etcd
+      spec:
+        serviceAccount: asb
+        containers:
+        - image: ${ETCD_IMAGE}
+          name: etcd
+          volumeMounts:
+            - name: etcd
+              mountPath: /data
+            - name: etcd-tls
+              mountPath: /etc/tls/private
+            - name: etcd-auth
+              mountPath: /var/run/etcd-auth-secret
+          imagePullPolicy: IfNotPresent
+          terminationMessagePath: /tmp/termination-log
+          workingDir: /etcd
+          args:
+            - ${ETCD_PATH}
+            - --data-dir=/data
+            - --listen-client-urls=https://0.0.0.0:2379
+            - --advertise-client-urls=https://0.0.0.0:2379
+            - --client-cert-auth
+            - --trusted-ca-file=${ETCD_TRUSTED_CA_FILE}
+            - --cert-file=${ETCD_CERT_FILE}
+            - --key-file=${ETCD_KEY_FILE}
+          ports:
+            - containerPort: 2379
+              protocol: TCP
+          env:
+          - name: ETCDCTL_API
+            value: "3"
+        volumes:
+          - name: etcd
+            persistentVolumeClaim:
+              claimName: etcd
+          - name: etcd-tls
+            secret:
+              secretName: etcd-tls
+          - name: etcd-auth
+            secret:
+              secretName: etcd-auth-secret
 
 - apiVersion: v1
   kind: Secret
@@ -187,6 +254,32 @@ objects:
   data:
     username: ${BROKER_USER}
     password: ${BROKER_PASS}
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: ${REGISTRY_SECRET_NAME}
+    namespace: ansible-service-broker
+  data:
+    username: ${DOCKERHUB_USER}
+    password: ${DOCKERHUB_PASS}
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: etcd-auth-secret
+    namespace: ansible-service-broker
+  data:
+    ca.crt: ${ETCD_TRUSTED_CA}
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: broker-etcd-auth-secret
+    namespace: ansible-service-broker
+  data:
+    client.crt: ${BROKER_CLIENT_CERT}
+    client.key: ${BROKER_CLIENT_KEY}
 
 - apiVersion: v1
   kind: ConfigMap
@@ -201,15 +294,16 @@ objects:
         - type: "${REGISTRY_TYPE}"
           name: "${REGISTRY_NAME}"
           url: "${REGISTRY_URL}"
-          user: "${DOCKERHUB_USER}"
-          pass: "${DOCKERHUB_PASS}"
           org: "${DOCKERHUB_ORG}"
           tag: "${TAG}"
           white_list:
             - ".*-apb$"
       dao:
-        etcd_host: 0.0.0.0
+        etcd_host: asb-etcd.${NAMESPACE}.svc
         etcd_port: 2379
+        etcd_ca_file: ${BROKER_ETCD_TRUSTED_CA}
+        etcd_client_cert: ${BROKER_CLIENT_CERT_PATH}
+        etcd_client_key: ${BROKER_CLIENT_KEY_PATH}
       log:
         logfile: /var/log/ansible-service-broker/asb.log
         stdout: true
@@ -243,7 +337,7 @@ objects:
     name: ansibleservicebroker-client
     namespace: ansible-service-broker
 
-- apiVersion: authorization.openshift.io/v1
+- apiVersion: rbac.authorization.k8s.io/v1beta1
   kind: ClusterRoleBinding
   metadata:
     name: ansibleservicebroker-client
@@ -254,6 +348,7 @@ objects:
   roleRef:
     kind: ClusterRole
     name: access-asb-role
+    apiGroup: rbac.authorization.k8s.io
 
 - apiVersion: v1
   kind: Secret
@@ -335,20 +430,60 @@ parameters:
   name: ETCD_PATH
   value: /usr/local/bin/etcd
 
+- description: Path of the etcd trusted ca file
+  displayname: etcd trusted ca file path
+  name: ETCD_TRUSTED_CA_FILE
+  value: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+
+- description: Path of the etcd server cert file
+  displayname: etcd server cert path
+  name: ETCD_CERT_FILE
+  value: /etc/tls/private/tls.crt
+
+- description: Path of the etcd server cert key file
+  displayname: etcd server key path
+  name: ETCD_KEY_FILE
+  value: /etc/tls/private/tls.key
+
+- description: Path of the broker client cert file for etcd
+  displayname: etcd client cert path
+  name: BROKER_CLIENT_CERT_PATH
+  value: /etc/tls/private/tls.crt
+
+- description: Path of the broker client cert key file for etcd
+  displayname: etcd client cert key path
+  name: BROKER_CLIENT_KEY_PATH
+  value: /etc/tls/private/tls.key
+
+- description: Path of the etcd trusted ca file
+  displayname: etcd trusted ca file path
+  name: BROKER_ETCD_TRUSTED_CA
+  value: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+
+- description: Value of the etcd server ca file
+  displayname: etcd trusted ca
+  name: ETCD_TRUSTED_CA
+  value: "YWRtaW4="
+
+- description: Value of the broker client cert for etcd
+  displayname: broker client cert
+  name: BROKER_CLIENT_CERT
+  value: "YWRtaW4="
+
+- description: Value of the broker client cert key for etcd
+  displayname: broker client cert key
+  name: BROKER_CLIENT_KEY
+  value: "YWRtaW4="
+
+- description: Namespace of the project that is being deploy
+  displayname: broker client cert key
+  name: NAMESPACE
+  value: "ansible-service-broker"
+
 - description: Configuration filepath for Ansible Service Broker
   displayname: Ansible Service Broker Configuration File
   name: BROKER_CONFIG
   value: /etc/ansible-service-broker/config.yaml
-
-- description: Dockerhub user password
-  displayname: Dockerhub user password
-  name: DOCKERHUB_PASS
-  value: changeme
-
-- description: Dockerhub user name
-  displayname: Dockerhub user name
-  name: DOCKERHUB_USER
-  value: changeme
 
 - description: Dockerhub organization
   displayname: Dockerhub organization
@@ -379,6 +514,16 @@ parameters:
   displayname: Registry Type
   name: REGISTRY_TYPE
   value: dockerhub
+
+- description: Registry Secret Name
+  displayname: Registry Secret Name
+  name: REGISTRY_SECRET_NAME
+  value: registry-auth-secret
+
+- description: Registry Auth Type
+  displayname: Registry Auth Type
+  name: REGISTRY_AUTH_TYPE
+  value: secret
 
 # Intentionally shortening the registry name to lessen impact of
 # PodPreset name has a requirement of being less than 63 chars
@@ -424,11 +569,10 @@ parameters:
   name: RECOVERY
   value: "true"
 
- #TODO: NEED TO CHANGE TO FALSE AFTER THE 3.7 CUT
 - description: Auto escalate the broker. Will remove user impresonation
   displayname: Auto Escalate
   name: AUTO_ESCALATE
-  value: "true"
+  value: "false"
 
 - description: APB ImagePullPolicy
   displayname: APB ImagePullPolicy
@@ -454,6 +598,16 @@ parameters:
   displayname: Broker user name
   name: BROKER_USER
   value: YWRtaW4=
+
+- description: Dockerhub user password
+  displayname: Dockerhub user password
+  name: DOCKERHUB_PASS
+  value: ""
+
+- description: Dockerhub user name
+  displayname: Dockerhub user name
+  name: DOCKERHUB_USER
+  value: ""
 
 ############################################################
 # NOTE: Default behavior for these are going to use the kubernetes
