@@ -1,0 +1,6 @@
+# Name: satellite-registration
+# Description: Subscribes machine using Red Hat Satellite
+
+ssh sudo /usr/bin/subscription-manager unregister
+
+ssh docker restart origin

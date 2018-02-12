@@ -1,0 +1,14 @@
+# Name: satellite-registration
+# Description: Subscribes machine using Red Hat Satellite
+# Required-Vars: SATELLITE_CA_URL, SATELLITE_ORG, SATELLITE_ACTIVATION_KEY
+
+ssh sudo /usr/bin/rpm -Uvh --force #{SATELLITE_CA_URL}
+
+ssh sudo /usr/bin/subscription-manager register --activationkey=#{SATELLITE_ACTIVATION_KEY} --org=#{SATELLITE_ORG}
+
+ssh sudo /usr/bin/subscription-manager attach --auto
+
+ssh docker restart origin
+
+
+
