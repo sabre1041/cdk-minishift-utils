@@ -1,6 +1,8 @@
 Ansible Service Broker Addon
 ======================
 
+**DEPRECATED** This addon has been deprecated in favor for the [official add-on](https://github.com/minishift/minishift-addons/tree/master/add-ons/ansible-service-broker)
+
 This addon installs the [Ansible Service Broker](https://github.com/openshift/ansible-service-broker)
 
 # Prerequisites
